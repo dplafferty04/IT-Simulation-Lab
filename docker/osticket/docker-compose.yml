@@ -1,0 +1,62 @@
+version: "3.9"
+
+services:
+  osticket-db:
+    image: mariadb:10.11
+    container_name: osticket_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-R00tP@ssw0rd!}
+      MYSQL_DATABASE: osticket
+      MYSQL_USER: osticket
+      MYSQL_PASSWORD: ${DB_PASSWORD:-0sTick3t!Pass}
+    volumes:
+      - osticket_db_data:/var/lib/mysql
+    networks:
+      - osticket_net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD:-R00tP@ssw0rd!}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  osticket:
+    image: osticket/osticket:latest
+    container_name: osticket_app
+    restart: unless-stopped
+    depends_on:
+      osticket-db:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    environment:
+      MYSQL_HOST: osticket-db
+      MYSQL_DATABASE: osticket
+      MYSQL_USER: osticket
+      MYSQL_PASSWORD: ${DB_PASSWORD:-0sTick3t!Pass}
+      INSTALL_SECRET: ${INSTALL_SECRET:-Ch4ng3M3N0w!2024XYZ}
+      SMTP_HOST: ${SMTP_HOST:-localhost}
+      SMTP_PORT: ${SMTP_PORT:-25}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@corp.local}
+      HELPDESK_NAME: "CorpTech IT Helpdesk"
+      HELPDESK_URL: "http://localhost:8080"
+    volumes:
+      - osticket_uploads:/var/lib/osticket/uploads
+      - osticket_plugins:/var/lib/osticket/include/plugins
+      - ./config/ost-config.php:/var/lib/osticket/include/ost-config.php:ro
+    networks:
+      - osticket_net
+    labels:
+      - "traefik.enable=false"
+
+volumes:
+  osticket_db_data:
+    driver: local
+  osticket_uploads:
+    driver: local
+  osticket_plugins:
+    driver: local
+
+networks:
+  osticket_net:
+    driver: bridge

@@ -1,0 +1,84 @@
+| ============================================================
+| Query: Brute Force / Failed Login Detection
+| Event ID 4625 — Failed logon attempt
+| Logic: 5+ failures for the same account within a 10-minute window
+| This surfaces credential stuffing, password spraying, and
+| locked-out users hammering the login screen.
+| ============================================================
+
+index=wineventlog sourcetype="WinEventLog:Security" EventCode=4625
+| eval target_account = mvindex(Account_Name, 1)
+| eval logon_type_name = case(
+    Logon_Type=="2",  "Interactive (local)",
+    Logon_Type=="3",  "Network (SMB/RPC)",
+    Logon_Type=="4",  "Batch",
+    Logon_Type=="5",  "Service",
+    Logon_Type=="7",  "Unlock",
+    Logon_Type=="8",  "NetworkCleartext",
+    Logon_Type=="10", "RemoteInteractive (RDP)",
+    Logon_Type=="11", "CachedInteractive",
+    true(), "Type ".Logon_Type
+  )
+| eval failure_reason = case(
+    Status=="0xC000006D" OR Sub_Status=="0xC000006A", "Wrong password",
+    Status=="0xC000006D" OR Sub_Status=="0xC0000064", "Unknown username",
+    Status=="0xC0000234", "Account locked out",
+    Status=="0xC0000072", "Account disabled",
+    Status=="0xC000006F", "Outside allowed logon hours",
+    Status=="0xC0000070", "Workstation restriction",
+    Status=="0xC0000193", "Account expired",
+    true(), "Code: ".Status." / ".Sub_Status
+  )
+| eval source_ip = coalesce(IpAddress, Source_Network_Address, "unknown")
+| bucket _time span=10m
+| stats
+    count                  AS failure_count,
+    values(logon_type_name) AS logon_types,
+    values(failure_reason)  AS failure_reasons,
+    values(source_ip)       AS source_ips,
+    dc(source_ip)           AS unique_ips,
+    values(WorkstationName) AS workstations
+    BY _time, target_account
+| where failure_count >= 5
+| eval window_start = strftime(_time, "%Y-%m-%d %H:%M")
+| eval risk = case(
+    failure_count >= 20, "CRITICAL",
+    failure_count >= 10, "HIGH",
+    failure_count >= 5,  "MEDIUM",
+    true(), "LOW"
+  )
+| sort -failure_count
+| table window_start, risk, target_account, failure_count, unique_ips,
+         source_ips, logon_types, failure_reasons
+| rename
+    window_start    AS "10-Min Window",
+    risk            AS "Risk Level",
+    target_account  AS "Target Account",
+    failure_count   AS "Failures",
+    unique_ips      AS "# Source IPs",
+    source_ips      AS "Source IPs",
+    logon_types     AS "Logon Type(s)",
+    failure_reasons AS "Failure Reason(s)"
+
+| ============================================================
+| Variant: Password spray detection (many accounts, few attempts each)
+| Attackers spray 1-2 guesses across many accounts to avoid lockout.
+| ============================================================
+
+| comment {"
+index=wineventlog sourcetype="WinEventLog:Security" EventCode=4625 earliest=-1h
+| eval target_account = mvindex(Account_Name, 1)
+| eval source_ip = coalesce(IpAddress, Source_Network_Address, "unknown")
+| bucket _time span=10m
+| stats
+    dc(target_account) AS accounts_targeted,
+    count              AS total_attempts,
+    values(target_account) AS accounts
+    BY _time, source_ip
+| where accounts_targeted >= 5 AND total_attempts <= accounts_targeted * 2
+| eval spray_ratio   = round(total_attempts / accounts_targeted, 2)
+| eval window_start  = strftime(_time, "%Y-%m-%d %H:%M")
+| sort -accounts_targeted
+| rename source_ip AS \"Source IP\", accounts_targeted AS \"Accounts Targeted\",
+         total_attempts AS \"Total Attempts\", spray_ratio AS \"Attempts/Account\"
+"}

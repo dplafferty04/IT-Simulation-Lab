@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+  meshcentral:
+    image: ghcr.io/ylianst/meshcentral:latest
+    container_name: meshcentral
+    restart: unless-stopped
+    ports:
+      - "8086:443"   # HTTPS web UI + agent traffic
+      - "8085:80"    # HTTP (redirects to HTTPS)
+    environment:
+      - NODE_ENV=production
+      - HOSTNAME=${MESH_HOSTNAME:-meshcentral.corp.local}
+      - ALLOW_IDLE_TIMEOUT=60
+      - REVERSE_PROXY=${REVERSE_PROXY:-false}
+      - REVERSE_PROXY_TLS_PORT=${REVERSE_PROXY_TLS_PORT:-}
+      - IFRAME=${IFRAME:-false}
+      - ALLOW_NEW_ACCOUNTS=${ALLOW_NEW_ACCOUNTS:-false}
+      - WEBRTC=${WEBRTC:-true}
+      - MESH_AGENT_PORT=4433
+    volumes:
+      - meshcentral_data:/opt/meshcentral/meshcentral-data
+      - meshcentral_user_files:/opt/meshcentral/meshcentral-files
+      - meshcentral_backup:/opt/meshcentral/meshcentral-backup
+      - ./config/config.json:/opt/meshcentral/meshcentral-data/config.json:ro
+    networks:
+      - mesh_net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "https://localhost:443/", "--no-check-certificate"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  meshcentral_data:
+    driver: local
+  meshcentral_user_files:
+    driver: local
+  meshcentral_backup:
+    driver: local
+
+networks:
+  mesh_net:
+    driver: bridge

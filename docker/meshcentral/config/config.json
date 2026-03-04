@@ -1,0 +1,47 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Ylianst/MeshCentral/master/meshcentral-config-schema.json",
+  "settings": {
+    "cert": "meshcentral.corp.local",
+    "port": 443,
+    "aliasPort": 443,
+    "redirPort": 80,
+    "AgentPing": 60,
+    "allowLoginToken": true,
+    "allowFraming": false,
+    "WebRTC": true,
+    "selfUpdate": false,
+    "browserPing": 30,
+    "agentIdleTimeout": 3600,
+    "tlsOffload": false,
+    "mpsPort": 4433,
+    "mpsAliasPort": 4433
+  },
+  "domains": {
+    "": {
+      "title": "CorpTech Remote Support",
+      "title2": "IT Department",
+      "newAccounts": false,
+      "welcomeText": "CorpTech Internal Remote Support Portal. Authorized personnel only.",
+      "footer": "CorpTech IT Helpdesk | homelab.corp.local",
+      "agentCustomization": {
+        "displayName": "CorpTech Remote Agent",
+        "description": "CorpTech IT Remote Support Agent",
+        "companyName": "CorpTech IT"
+      },
+      "sessionRecording": {
+        "index": true,
+        "maxRecordingSize": 1048576000
+      },
+      "userGroups": {
+        "IT-Helpdesk": {
+          "name": "IT Helpdesk Technicians",
+          "desc": "Level 1 and Level 2 support staff"
+        },
+        "Network-Ops": {
+          "name": "Network Operations",
+          "desc": "Network engineering and firewall admins"
+        }
+      }
+    }
+  }
+}

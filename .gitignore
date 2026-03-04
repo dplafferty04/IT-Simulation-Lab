@@ -1,0 +1,33 @@
+# Secrets — never commit
+docker/.env
+docker/osticket/.env
+docker/meshcentral/.env
+**/*.secret
+**/*.key
+**/*.pem
+**/*.crt
+
+# Docker runtime data
+docker/volumes/
+
+# OS junk
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Claude Code
+.claude/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Screenshots (too large for git — document paths in README instead)
+docs/screenshots/*.png
+docs/screenshots/*.jpg

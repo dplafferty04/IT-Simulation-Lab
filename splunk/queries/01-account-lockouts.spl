@@ -1,0 +1,47 @@
+| ============================================================
+| Query: AD Account Lockouts
+| Event ID 4740 — fired on the DC when an account gets locked
+| Source: Windows Security Event Log on DC01
+| Index: wineventlog (adjust to match your Splunk input config)
+| ============================================================
+
+index=wineventlog sourcetype="WinEventLog:Security" EventCode=4740
+| eval locked_account = mvindex(Account_Name, 0)
+| eval locked_by_host = mvindex(Caller_Computer_Name, 0)
+| eval dc_host = host
+| eval lockout_time = strftime(_time, "%Y-%m-%d %H:%M:%S")
+| table lockout_time, locked_account, locked_by_host, dc_host
+| sort -lockout_time
+| rename
+    lockout_time   AS "Lockout Time",
+    locked_account AS "Locked Account",
+    locked_by_host AS "Source Workstation",
+    dc_host        AS "Domain Controller"
+
+| ============================================================
+| Variant: Lockout frequency per account (last 7 days)
+| Useful for identifying repeat offenders / credential stuffing
+| ============================================================
+
+| comment {"
+index=wineventlog sourcetype="WinEventLog:Security" EventCode=4740 earliest=-7d
+| eval locked_account = mvindex(Account_Name, 0)
+| eval source_host    = mvindex(Caller_Computer_Name, 0)
+| stats
+    count                AS total_lockouts,
+    dc(source_host)      AS unique_sources,
+    values(source_host)  AS workstations,
+    earliest(_time)      AS first_lockout,
+    latest(_time)        AS last_lockout
+    BY locked_account
+| eval first_lockout = strftime(first_lockout, "%Y-%m-%d %H:%M")
+| eval last_lockout  = strftime(last_lockout,  "%Y-%m-%d %H:%M")
+| sort -total_lockouts
+| rename
+    locked_account AS "Account",
+    total_lockouts AS "# Lockouts (7d)",
+    unique_sources AS "# Source Hosts",
+    workstations   AS "Workstations",
+    first_lockout  AS "First Seen",
+    last_lockout   AS "Last Seen"
+"}

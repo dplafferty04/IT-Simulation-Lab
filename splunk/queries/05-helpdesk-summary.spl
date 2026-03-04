@@ -1,0 +1,126 @@
+| ============================================================
+| Query Collection: Helpdesk Operations Dashboard Panels
+| These are the backing SPL queries for each dashboard panel.
+| ============================================================
+
+
+| ---- PANEL 1: Security Event Activity Timeline (last 24h) ---------------
+| Line chart: event volume by type over time
+
+index=wineventlog sourcetype="WinEventLog:Security"
+  (EventCode=4625 OR EventCode=4740 OR EventCode=4720 OR EventCode=4724
+   OR EventCode=4728 OR EventCode=5136 OR EventCode=4719 OR EventCode=4767)
+earliest=-24h
+| eval event_category = case(
+    EventCode=="4625", "Failed Logon",
+    EventCode=="4740", "Account Lockout",
+    EventCode=="4720", "User Created",
+    EventCode=="4724", "Password Reset",
+    EventCode=="4728" OR EventCode=="4756", "Group Membership Change",
+    EventCode=="5136" OR EventCode=="5137", "GPO/AD Object Changed",
+    EventCode=="4719", "Audit Policy Changed",
+    EventCode=="4767", "Account Unlocked",
+    true(), "Other (EC:".EventCode.")"
+  )
+| timechart span=1h count BY event_category
+
+
+| ---- PANEL 2: Top Locked-Out Accounts (7 days) --------------------------
+| Bar chart
+
+index=wineventlog sourcetype="WinEventLog:Security" EventCode=4740 earliest=-7d
+| eval locked_account = mvindex(Account_Name, 0)
+| stats count AS lockout_count BY locked_account
+| sort -lockout_count
+| head 10
+| rename locked_account AS "Account", lockout_count AS "Lockouts"
+
+
+| ---- PANEL 3: Failed Logins by Source IP (last 24h) ---------------------
+| Bar chart — useful for spotting external IPs or rogue internal hosts
+
+index=wineventlog sourcetype="WinEventLog:Security" EventCode=4625 earliest=-24h
+| eval source_ip = coalesce(IpAddress, Source_Network_Address, "unknown")
+| where source_ip != "-" AND source_ip != "unknown" AND source_ip != "127.0.0.1"
+| stats count AS failures, dc(Account_Name) AS accounts_targeted BY source_ip
+| sort -failures
+| head 10
+| rename source_ip AS "Source IP", failures AS "# Failures", accounts_targeted AS "Accounts Targeted"
+
+
+| ---- PANEL 4: Recent Account Lockouts (table, last 4h) ------------------
+
+index=wineventlog sourcetype="WinEventLog:Security" EventCode=4740 earliest=-4h
+| eval locked_account   = mvindex(Account_Name, 0)
+| eval source_workstation = mvindex(Caller_Computer_Name, 0)
+| eval lockout_time     = strftime(_time, "%H:%M:%S")
+| table lockout_time, locked_account, source_workstation, host
+| sort -lockout_time
+| rename lockout_time AS "Time", locked_account AS "Account",
+         source_workstation AS "Workstation", host AS "DC"
+
+
+| ---- PANEL 5: New Users Created (last 30 days) --------------------------
+
+index=wineventlog sourcetype="WinEventLog:Security" EventCode=4720 earliest=-30d
+| eval new_account = mvindex(Target_Account_Name, 0)
+| eval created_by  = mvindex(Subject_Account_Name, 0)
+| eval create_date = strftime(_time, "%Y-%m-%d")
+| stats
+    count           AS total,
+    values(new_account) AS accounts,
+    values(created_by)  AS created_by
+    BY create_date
+| sort -create_date
+
+
+| ---- PANEL 6: Recent GPO/AD Changes (table) -----------------------------
+
+index=wineventlog sourcetype="WinEventLog:Security"
+  (EventCode=5136 OR EventCode=5137 OR EventCode=5141 OR EventCode=4719)
+earliest=-24h
+| eval change_type = case(
+    EventCode=="5136", "GPO Modified",
+    EventCode=="5137", "GPO/Object Created",
+    EventCode=="5141", "Object Deleted",
+    EventCode=="4719", "Audit Policy Changed",
+    true(), "Unknown"
+  )
+| eval actor     = mvindex(Subject_Account_Name, 0)
+| eval ev_time   = strftime(_time, "%Y-%m-%d %H:%M")
+| table ev_time, change_type, actor, host
+| sort -ev_time
+| rename ev_time AS "Time", change_type AS "Change", actor AS "By", host AS "DC"
+
+
+| ---- PANEL 7: Authentication Health Summary (Single Value tiles) ---------
+
+| Total failed logins last 24h
+index=wineventlog sourcetype="WinEventLog:Security" EventCode=4625 earliest=-24h
+| stats count AS "Failed Logins (24h)"
+
+| Total lockouts last 24h
+index=wineventlog sourcetype="WinEventLog:Security" EventCode=4740 earliest=-24h
+| stats count AS "Account Lockouts (24h)"
+
+| Total new users last 30d
+index=wineventlog sourcetype="WinEventLog:Security" EventCode=4720 earliest=-30d
+| stats count AS "New Accounts (30d)"
+
+| Password resets last 7d
+index=wineventlog sourcetype="WinEventLog:Security" EventCode=4724 earliest=-7d
+| stats count AS "Password Resets (7d)"
+
+
+| ---- PANEL 8: Privileged Group Changes (last 7 days) --------------------
+
+index=wineventlog sourcetype="WinEventLog:Security"
+  (EventCode=4728 OR EventCode=4732 OR EventCode=4756) earliest=-7d
+| eval member   = mvindex(Member_Account_Name, 0)
+| eval grp      = mvindex(Target_Account_Name, 0)
+| eval actor    = mvindex(Subject_Account_Name, 0)
+| eval ev_time  = strftime(_time, "%Y-%m-%d %H:%M")
+| table ev_time, member, grp, actor, host
+| sort -ev_time
+| rename ev_time AS "Time", member AS "Member Added", grp AS "Group",
+         actor AS "Performed By", host AS "DC"

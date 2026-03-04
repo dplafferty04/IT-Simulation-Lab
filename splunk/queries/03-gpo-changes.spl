@@ -1,0 +1,80 @@
+| ============================================================
+| Query: Group Policy Object Changes
+|
+| Event IDs to correlate:
+|   5136 — Directory service object was modified (LDAP write to AD)
+|           Fires when a GPO's attributes change in AD.
+|   5137 — Directory service object was created
+|   5141 — Directory service object was deleted
+|   4719 — System audit policy changed
+|
+| Note: Event 5136 requires "Audit Directory Service Changes" to be
+| enabled on the DC (Advanced Audit Policy Configuration).
+| Enable via: Computer Config > Policies > Windows Settings >
+|             Security Settings > Advanced Audit Policy > DS Access >
+|             Audit Directory Service Changes = Success
+| ============================================================
+
+index=wineventlog sourcetype="WinEventLog:Security" (EventCode=5136 OR EventCode=5137 OR EventCode=5141)
+Object_Class="groupPolicyContainer"
+| eval change_type = case(
+    EventCode=="5136", "GPO Modified",
+    EventCode=="5137", "GPO Created",
+    EventCode=="5141", "GPO Deleted",
+    true(), "Unknown"
+  )
+| eval changed_by   = mvindex(Subject_Account_Name, 0)
+| eval changed_by_domain = mvindex(Subject_Account_Domain, 0)
+| eval gpo_name     = coalesce(
+    'Object_DN',
+    mvindex(Object_DN, 0)
+  )
+| eval attribute    = coalesce(LDAP_Display_Name, "N/A")
+| eval old_value    = coalesce(Old_Value, "(new)")
+| eval new_value    = coalesce(New_Value, "(deleted)")
+| eval change_time  = strftime(_time, "%Y-%m-%d %H:%M:%S")
+| eval dc_host      = host
+| table change_time, change_type, changed_by, changed_by_domain,
+         gpo_name, attribute, old_value, new_value, dc_host
+| sort -change_time
+| rename
+    change_time        AS "Change Time",
+    change_type        AS "Change Type",
+    changed_by         AS "Modified By",
+    changed_by_domain  AS "Domain",
+    gpo_name           AS "GPO (DN)",
+    attribute          AS "Attribute Changed",
+    old_value          AS "Old Value",
+    new_value          AS "New Value",
+    dc_host            AS "DC"
+
+| ============================================================
+| Variant: Catch 4719 — direct audit policy changes
+| (Attacker disabling audit logging to cover tracks)
+| ============================================================
+
+| comment {"
+index=wineventlog sourcetype="WinEventLog:Security" EventCode=4719
+| eval changed_by  = mvindex(Subject_Account_Name, 0)
+| eval policy_name = Policy_Change
+| eval change_time = strftime(_time, \"%Y-%m-%d %H:%M:%S\")
+| table change_time, host, changed_by, policy_name
+| rename change_time AS \"Time\", host AS \"DC\", changed_by AS \"Modified By\",
+         policy_name AS \"Audit Policy Changed\"
+"}
+
+| ============================================================
+| Variant: Any privileged action by non-admin accounts
+| ============================================================
+
+| comment {"
+index=wineventlog sourcetype=\"WinEventLog:Security\"
+  (EventCode=5136 OR EventCode=5137 OR EventCode=5141 OR EventCode=4719)
+| eval actor = mvindex(Subject_Account_Name, 0)
+| where NOT match(actor, \"^(Administrator|SYSTEM|DC01\\$)$\")
+| eval change_time = strftime(_time, \"%Y-%m-%d %H:%M:%S\")
+| stats count AS changes, values(EventCode) AS event_codes,
+         latest(change_time) AS last_seen BY actor
+| sort -changes
+| rename actor AS \"Account\", changes AS \"# Changes\", last_seen AS \"Last Change\"
+"}

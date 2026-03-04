@@ -1,0 +1,410 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Splunk Simple XML Dashboard: Helpdesk Operations
+  App: corptech_helpdesk
+  File path: $SPLUNK_HOME/etc/apps/corptech_helpdesk/local/data/ui/views/helpdesk_operations.xml
+
+  INSTALLATION:
+    1. Create app directory (if not using existing app):
+       mkdir -p $SPLUNK_HOME/etc/apps/corptech_helpdesk/local/data/ui/views/
+    2. Copy this file there as helpdesk_operations.xml
+    3. Restart Splunk or reload the app
+
+  OR import via UI:
+    Settings > User Interface > Views > Create New View > paste XML
+-->
+<dashboard version="1.1" theme="dark">
+  <label>Helpdesk Operations</label>
+  <description>CorpTech IT Helpdesk — Active Directory security events, authentication activity, and administrative changes. Refresh: real-time.</description>
+
+  <!-- ═══════════════════════════════════════════════════════
+       TIME RANGE PICKER + GLOBAL TOKENS
+       ═══════════════════════════════════════════════════════ -->
+  <fieldset submitButton="false" autoRun="true">
+    <input type="time" token="global_time" searchWhenChanged="true">
+      <label>Time Range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="text" token="target_account" searchWhenChanged="true">
+      <label>Filter Account (optional)</label>
+      <default>*</default>
+      <prefix>Account_Name="</prefix>
+      <suffix>"</suffix>
+    </input>
+  </fieldset>
+
+  <!-- ═══════════════════════════════════════════════════════
+       ROW 1 — KPI SINGLE-VALUE TILES
+       ═══════════════════════════════════════════════════════ -->
+  <row>
+    <panel>
+      <title>Account Lockouts</title>
+      <single>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security" EventCode=4740
+| stats count AS lockouts</query>
+          <earliest>$global_time.earliest$</earliest>
+          <latest>$global_time.latest$</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xf1813f","0xdc4e41"]</option>
+        <option name="rangeValues">[0,3,9]</option>
+        <option name="drilldown">all</option>
+        <option name="useColors">1</option>
+        <drilldown>
+          <link target="_blank">/app/corptech_helpdesk/search?q=index%3Dwineventlog+EventCode%3D4740&amp;earliest=$global_time.earliest$&amp;latest=$global_time.latest$</link>
+        </drilldown>
+      </single>
+    </panel>
+
+    <panel>
+      <title>Failed Logons</title>
+      <single>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security" EventCode=4625
+| stats count AS failures</query>
+          <earliest>$global_time.earliest$</earliest>
+          <latest>$global_time.latest$</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xf1813f","0xdc4e41"]</option>
+        <option name="rangeValues">[0,20,99]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>Password Resets (Admin)</title>
+      <single>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security" EventCode=4724
+| stats count AS resets</query>
+          <earliest>$global_time.earliest$</earliest>
+          <latest>$global_time.latest$</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xf1813f"]</option>
+        <option name="rangeValues">[0,10]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>New Accounts Created</title>
+      <single>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security" EventCode=4720
+| stats count AS new_accounts</query>
+          <earliest>$global_time.earliest$</earliest>
+          <latest>$global_time.latest$</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[0,1]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>GPO / AD Changes</title>
+      <single>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security"
+  (EventCode=5136 OR EventCode=5137 OR EventCode=5141 OR EventCode=4719)
+| stats count AS changes</query>
+          <earliest>$global_time.earliest$</earliest>
+          <latest>$global_time.latest$</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[0,1]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+  </row>
+
+  <!-- ═══════════════════════════════════════════════════════
+       ROW 2 — ACTIVITY TIMELINE + LOCKOUT BAR CHART
+       ═══════════════════════════════════════════════════════ -->
+  <row>
+    <panel>
+      <title>Security Event Activity Timeline</title>
+      <chart>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security"
+  (EventCode=4625 OR EventCode=4740 OR EventCode=4720 OR EventCode=4724
+   OR EventCode=4728 OR EventCode=5136 OR EventCode=4719 OR EventCode=4767)
+| eval event_category = case(
+    EventCode=="4625", "Failed Logon",
+    EventCode=="4740", "Account Lockout",
+    EventCode=="4720", "User Created",
+    EventCode=="4724", "Password Reset",
+    EventCode=="4728", "Group Membership Change",
+    EventCode=="5136" OR EventCode=="5137", "GPO/AD Changed",
+    EventCode=="4719", "Audit Policy Changed",
+    EventCode=="4767", "Account Unlocked",
+    true(), "Other"
+  )
+| timechart span=1h count BY event_category</query>
+          <earliest>$global_time.earliest$</earliest>
+          <latest>$global_time.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.chart.showDataLabels">minmax</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">Event Count</option>
+        <option name="charting.drilldown">all</option>
+        <option name="height">280</option>
+      </chart>
+    </panel>
+
+    <panel>
+      <title>Top Accounts with Lockouts (7 days)</title>
+      <chart>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security" EventCode=4740 earliest=-7d
+| eval locked_account=mvindex(Account_Name,0)
+| stats count AS lockout_count BY locked_account
+| sort -lockout_count
+| head 8</query>
+          <earliest>-7d@d</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">bar</option>
+        <option name="charting.chart.showDataLabels">all</option>
+        <option name="charting.legend.placement">none</option>
+        <option name="charting.axisTitleX.text">Account</option>
+        <option name="charting.axisTitleY.text">Lockout Count</option>
+        <option name="charting.drilldown">all</option>
+        <option name="height">280</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- ═══════════════════════════════════════════════════════
+       ROW 3 — FAILED LOGINS BY IP + BRUTE FORCE DETECTION
+       ═══════════════════════════════════════════════════════ -->
+  <row>
+    <panel>
+      <title>Failed Logons by Source IP</title>
+      <chart>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security" EventCode=4625
+| eval source_ip=coalesce(IpAddress,Source_Network_Address,"unknown")
+| where source_ip!="unknown" AND source_ip!="-" AND source_ip!="127.0.0.1" AND source_ip!="::1"
+| stats count AS failures BY source_ip
+| sort -failures
+| head 10</query>
+          <earliest>$global_time.earliest$</earliest>
+          <latest>$global_time.latest$</latest>
+        </search>
+        <option name="charting.chart">bar</option>
+        <option name="charting.chart.showDataLabels">all</option>
+        <option name="charting.legend.placement">none</option>
+        <option name="charting.axisTitleX.text">Source IP</option>
+        <option name="charting.axisTitleY.text">Failures</option>
+        <option name="charting.drilldown">all</option>
+      </chart>
+    </panel>
+
+    <panel>
+      <title>Brute Force Detections (5+ failures / 10 min)</title>
+      <table>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security" EventCode=4625
+| eval target_account=mvindex(Account_Name,1)
+| eval source_ip=coalesce(IpAddress,Source_Network_Address,"unknown")
+| bucket _time span=10m
+| stats count AS failures, values(source_ip) AS source_ips BY _time, target_account
+| where failures >= 5
+| eval risk=case(failures>=20,"CRITICAL",failures>=10,"HIGH",true(),"MEDIUM")
+| eval window=strftime(_time,"%m/%d %H:%M")
+| sort -failures
+| head 20
+| table window, risk, target_account, failures, source_ips
+| rename window AS "Window", risk AS "Risk", target_account AS "Account",
+         failures AS "Failures", source_ips AS "Source IP(s)"</query>
+          <earliest>$global_time.earliest$</earliest>
+          <latest>$global_time.latest$</latest>
+        </search>
+        <option name="drilldown">row</option>
+        <option name="rowNumbers">false</option>
+        <option name="dataOverlayMode">none</option>
+        <format type="color" field="Risk">
+          <colorPalette type="map">{"CRITICAL":#dc4e41,"HIGH":#f1813f,"MEDIUM":#f8be34}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ═══════════════════════════════════════════════════════
+       ROW 4 — RECENT LOCKOUTS + GPO CHANGES
+       ═══════════════════════════════════════════════════════ -->
+  <row>
+    <panel>
+      <title>Recent Account Lockouts</title>
+      <table>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security" EventCode=4740
+| eval locked_account=mvindex(Account_Name,0)
+| eval source_workstation=mvindex(Caller_Computer_Name,0)
+| eval lockout_time=strftime(_time,"%m/%d %H:%M:%S")
+| table lockout_time, locked_account, source_workstation, host
+| sort -lockout_time
+| head 15
+| rename lockout_time AS "Time", locked_account AS "Account",
+         source_workstation AS "From Workstation", host AS "DC"</query>
+          <earliest>$global_time.earliest$</earliest>
+          <latest>$global_time.latest$</latest>
+        </search>
+        <option name="drilldown">row</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+
+    <panel>
+      <title>GPO and AD Policy Changes</title>
+      <table>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security"
+  (EventCode=5136 OR EventCode=5137 OR EventCode=5141 OR EventCode=4719)
+| eval change_type=case(
+    EventCode=="5136","Modified",
+    EventCode=="5137","Created",
+    EventCode=="5141","Deleted",
+    EventCode=="4719","Audit Policy",
+    true(),"Unknown")
+| eval actor=mvindex(Subject_Account_Name,0)
+| eval ev_time=strftime(_time,"%m/%d %H:%M")
+| eval obj=coalesce(mvindex(Object_DN,0),Policy_Change,"N/A")
+| table ev_time, change_type, actor, obj, host
+| sort -ev_time
+| head 15
+| rename ev_time AS "Time", change_type AS "Change", actor AS "By",
+         obj AS "Object / Policy", host AS "DC"</query>
+          <earliest>$global_time.earliest$</earliest>
+          <latest>$global_time.latest$</latest>
+        </search>
+        <option name="drilldown">row</option>
+        <format type="color" field="Change">
+          <colorPalette type="map">{"Deleted":#dc4e41,"Created":#53a051,"Modified":#f8be34,"Audit Policy":#f1813f}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ═══════════════════════════════════════════════════════
+       ROW 5 — NEW USERS + PRIVILEGED GROUP CHANGES
+       ═══════════════════════════════════════════════════════ -->
+  <row>
+    <panel>
+      <title>New User Accounts Created (30 days)</title>
+      <table>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security" EventCode=4720 earliest=-30d
+| eval new_account=mvindex(Target_Account_Name,0)
+| eval created_by=mvindex(Subject_Account_Name,0)
+| eval priv_flag=if(match(new_account,"(?i)(admin|svc|service|sa_|adm_)"),"⚠ YES","No")
+| eval create_time=strftime(_time,"%Y-%m-%d %H:%M")
+| table create_time, new_account, created_by, priv_flag, host
+| sort -create_time
+| rename create_time AS "Created At", new_account AS "New Account",
+         created_by AS "Created By", priv_flag AS "Priv Name?", host AS "DC"</query>
+          <earliest>-30d@d</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">row</option>
+        <format type="color" field="Priv Name?">
+          <colorPalette type="map">{"⚠ YES":#dc4e41,"No":#53a051}</colorPalette>
+        </format>
+      </table>
+    </panel>
+
+    <panel>
+      <title>Privileged Group Membership Changes (7 days)</title>
+      <table>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security"
+  (EventCode=4728 OR EventCode=4732 OR EventCode=4756) earliest=-7d
+| eval member=mvindex(Member_Account_Name,0)
+| eval grp=mvindex(Target_Account_Name,0)
+| eval actor=mvindex(Subject_Account_Name,0)
+| eval is_high_priv=if(
+    match(grp,"(?i)(Domain Admin|Enterprise Admin|Schema Admin|Backup Operator|Administrator)"),
+    "HIGH ⚠","Standard")
+| eval ev_time=strftime(_time,"%m/%d %H:%M")
+| table ev_time, member, grp, is_high_priv, actor, host
+| sort -ev_time
+| rename ev_time AS "Time", member AS "Member Added", grp AS "Group",
+         is_high_priv AS "Risk", actor AS "Performed By", host AS "DC"</query>
+          <earliest>-7d@d</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">row</option>
+        <format type="color" field="Risk">
+          <colorPalette type="map">{"HIGH ⚠":#dc4e41,"Standard":#53a051}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ═══════════════════════════════════════════════════════
+       ROW 6 — ACCOUNT UNLOCKS TIMELINE
+       ═══════════════════════════════════════════════════════ -->
+  <row>
+    <panel>
+      <title>Account Unlock Activity (Helpdesk Actions)</title>
+      <chart>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security" EventCode=4767
+| eval unlocked_account=mvindex(Target_Account_Name,0)
+| eval unlocked_by=mvindex(Subject_Account_Name,0)
+| timechart span=4h count BY unlocked_by</query>
+          <earliest>$global_time.earliest$</earliest>
+          <latest>$global_time.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.showDataLabels">all</option>
+        <option name="charting.legend.placement">right</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">Unlock Count</option>
+        <option name="charting.drilldown">all</option>
+      </chart>
+    </panel>
+
+    <panel>
+      <title>Logon Type Breakdown (Successful)</title>
+      <chart>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security" EventCode=4624
+| eval logon_type_name=case(
+    Logon_Type=="2","Interactive",
+    Logon_Type=="3","Network",
+    Logon_Type=="4","Batch",
+    Logon_Type=="5","Service",
+    Logon_Type=="7","Unlock",
+    Logon_Type=="10","RemoteInteractive (RDP)",
+    Logon_Type=="11","CachedInteractive",
+    true(),"Other (Type ".Logon_Type.")")
+| stats count BY logon_type_name
+| sort -count</query>
+          <earliest>$global_time.earliest$</earliest>
+          <latest>$global_time.latest$</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.legend.placement">right</option>
+        <option name="charting.drilldown">all</option>
+      </chart>
+    </panel>
+  </row>
+
+</dashboard>
