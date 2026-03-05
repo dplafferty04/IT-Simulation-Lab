@@ -1,0 +1,136 @@
+<dashboard version="1.1" theme="dark">
+  <label>CorpTech Helpdesk Operations</label>
+  <description>Web traffic monitoring and AD security overview</description>
+
+  <!-- ── Row 1: Web Traffic KPIs ─────────────────────────── -->
+  <row>
+    <panel>
+      <title>Total Requests (24h)</title>
+      <single>
+        <search>
+          <query>index=corptech sourcetype=nginx_access earliest=-24h | stats count</query>
+          <earliest>-24h</earliest><latest>now</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <title>HTTP Errors 4xx/5xx (24h)</title>
+      <single>
+        <search>
+          <query>index=corptech sourcetype=nginx_access earliest=-24h status>=400 | stats count</query>
+          <earliest>-24h</earliest><latest>now</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="useColors">1</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[0,10]</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Unique Client IPs (24h)</title>
+      <single>
+        <search>
+          <query>index=corptech sourcetype=nginx_access earliest=-24h | stats dc(client_ip)</query>
+          <earliest>-24h</earliest><latest>now</latest>
+        </search>
+      </single>
+    </panel>
+    <panel>
+      <title>osTicket Portal Hits (24h)</title>
+      <single>
+        <search>
+          <query>index=corptech sourcetype=nginx_access earliest=-24h uri="/scp/*" OR uri="/" | stats count</query>
+          <earliest>-24h</earliest><latest>now</latest>
+        </search>
+      </single>
+    </panel>
+  </row>
+
+  <!-- ── Row 2: Traffic Over Time ────────────────────────── -->
+  <row>
+    <panel>
+      <title>Web Requests Over Time</title>
+      <chart>
+        <search>
+          <query>index=corptech sourcetype=nginx_access earliest=-24h
+| timechart span=30m count by status_class</query>
+          <earliest>-24h</earliest><latest>now</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.legend.placement">bottom</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Top Requested URIs</title>
+      <table>
+        <search>
+          <query>index=corptech sourcetype=nginx_access earliest=-24h
+| stats count by uri
+| sort -count
+| head 10</query>
+          <earliest>-24h</earliest><latest>now</latest>
+        </search>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ── Row 3: Error Analysis ────────────────────────────── -->
+  <row>
+    <panel>
+      <title>HTTP Status Breakdown</title>
+      <chart>
+        <search>
+          <query>index=corptech sourcetype=nginx_access earliest=-24h
+| stats count by status
+| sort -count</query>
+          <earliest>-24h</earliest><latest>now</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Recent Errors (4xx / 5xx)</title>
+      <table>
+        <search>
+          <query>index=corptech sourcetype=nginx_access earliest=-24h status>=400
+| table _time, client_ip, method, uri, status
+| sort -_time
+| head 20</query>
+          <earliest>-24h</earliest><latest>now</latest>
+        </search>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ── Row 4: AD Security (populates when DC is online) ── -->
+  <row>
+    <panel>
+      <title>Account Lockouts (requires AD forwarder)</title>
+      <table>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security" EventCode=4740 earliest=-24h
+| eval locked_account=mvindex(Account_Name,0)
+| eval source_workstation=mvindex(Caller_Computer_Name,0)
+| table _time, locked_account, source_workstation, host
+| sort -_time</query>
+          <earliest>-24h</earliest><latest>now</latest>
+        </search>
+      </table>
+    </panel>
+    <panel>
+      <title>Failed Logons (requires AD forwarder)</title>
+      <chart>
+        <search>
+          <query>index=wineventlog sourcetype="WinEventLog:Security" EventCode=4625 earliest=-24h
+| timechart span=1h count</query>
+          <earliest>-24h</earliest><latest>now</latest>
+        </search>
+        <option name="charting.chart">line</option>
+      </chart>
+    </panel>
+  </row>
+
+</dashboard>

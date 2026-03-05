@@ -1,14 +1,12 @@
 -- ============================================================
 -- osTicket Seed: Departments, SLA Plans, Help Topics
--- Target: osTicket v1.17.x / v1.18.x
+-- Target: osTicket v1.17.5 (devinsolutions image)
 -- Run AFTER the web installer completes.
 -- ============================================================
 
 USE osticket;
 
 -- ── SLA Plans ────────────────────────────────────────────────
--- grace_period = hours before ticket is marked overdue
--- flags: 2 = transient (auto-close when resolved), bit 3 = enable
 
 INSERT INTO ost_sla (name, grace_period, flags, notes, created, updated)
 SELECT 'Critical - 1 Hour', 1, 3,
@@ -35,23 +33,20 @@ SELECT 'Low - 24 Hours', 24, 3,
 WHERE NOT EXISTS (SELECT 1 FROM ost_sla WHERE name = 'Low - 24 Hours');
 
 -- ── Departments ───────────────────────────────────────────────
--- flags: 1 = active, 2 = public
--- ispublic is set in the flags bitmask in newer versions, but
--- some versions use a separate ispublic column — we set both.
 
 INSERT INTO ost_department
     (pid, tpl_id, sla_id, name, `signature`, ispublic, email_id,
      autoresp_email_id, flags, created, updated)
 SELECT
-    0,                                              -- pid (root dept)
-    0,                                              -- tpl_id (default template)
+    0,
+    0,
     (SELECT id FROM ost_sla WHERE name = 'Normal - 8 Hours' LIMIT 1),
     'IT Helpdesk',
-    'CorpTech IT Helpdesk\nPhone: ext. 5900 | Email: helpdesk@corp.local\nhttps://helpdesk.corp.local',
-    1,                                              -- ispublic
-    0,                                              -- email_id (uses system default)
+    'CorpTech IT Helpdesk\nPhone: ext. 5900 | Email: helpdesk@corp.local',
+    1,
     0,
-    1,                                              -- flags: active
+    0,
+    1,
     NOW(), NOW()
 WHERE NOT EXISTS (SELECT 1 FROM ost_department WHERE name = 'IT Helpdesk');
 
@@ -63,7 +58,7 @@ SELECT
     0,
     (SELECT id FROM ost_sla WHERE name = 'High - 4 Hours' LIMIT 1),
     'Network Operations',
-    'CorpTech Network Operations\nPhone: ext. 5910 | Email: netops@corp.local\n24/7 NOC: ext. 5911',
+    'CorpTech Network Operations\nPhone: ext. 5910 | Email: netops@corp.local',
     1,
     0,
     0,
@@ -71,15 +66,13 @@ SELECT
     NOW(), NOW()
 WHERE NOT EXISTS (SELECT 1 FROM ost_department WHERE name = 'Network Operations');
 
--- ── Help Topics (Ticket Categories) ──────────────────────────
--- Each topic belongs to a department and has a default SLA.
--- pid = 0 means top-level topic.
+-- ── Help Topics ───────────────────────────────────────────────
+-- v1.17.x schema: topic_pid (not pid), notes (not note), no isactive column
 
--- Top-level categories
 INSERT INTO ost_help_topic
-    (isactive, ispublic, noautoresp, pid, sla_id, dept_id, topic, note, created, updated)
+    (ispublic, noautoresp, topic_pid, sla_id, dept_id, topic, notes, created, updated)
 SELECT
-    1, 1, 0, 0,
+    1, 0, 0,
     (SELECT id FROM ost_sla WHERE name = 'Normal - 8 Hours' LIMIT 1),
     (SELECT id FROM ost_department WHERE name = 'IT Helpdesk' LIMIT 1),
     'Account Issues',
@@ -88,9 +81,9 @@ SELECT
 WHERE NOT EXISTS (SELECT 1 FROM ost_help_topic WHERE topic = 'Account Issues');
 
 INSERT INTO ost_help_topic
-    (isactive, ispublic, noautoresp, pid, sla_id, dept_id, topic, note, created, updated)
+    (ispublic, noautoresp, topic_pid, sla_id, dept_id, topic, notes, created, updated)
 SELECT
-    1, 1, 0, 0,
+    1, 0, 0,
     (SELECT id FROM ost_sla WHERE name = 'Normal - 8 Hours' LIMIT 1),
     (SELECT id FROM ost_department WHERE name = 'IT Helpdesk' LIMIT 1),
     'Hardware',
@@ -99,9 +92,9 @@ SELECT
 WHERE NOT EXISTS (SELECT 1 FROM ost_help_topic WHERE topic = 'Hardware');
 
 INSERT INTO ost_help_topic
-    (isactive, ispublic, noautoresp, pid, sla_id, dept_id, topic, note, created, updated)
+    (ispublic, noautoresp, topic_pid, sla_id, dept_id, topic, notes, created, updated)
 SELECT
-    1, 1, 0, 0,
+    1, 0, 0,
     (SELECT id FROM ost_sla WHERE name = 'Normal - 8 Hours' LIMIT 1),
     (SELECT id FROM ost_department WHERE name = 'IT Helpdesk' LIMIT 1),
     'Software',
@@ -110,9 +103,9 @@ SELECT
 WHERE NOT EXISTS (SELECT 1 FROM ost_help_topic WHERE topic = 'Software');
 
 INSERT INTO ost_help_topic
-    (isactive, ispublic, noautoresp, pid, sla_id, dept_id, topic, note, created, updated)
+    (ispublic, noautoresp, topic_pid, sla_id, dept_id, topic, notes, created, updated)
 SELECT
-    1, 1, 0, 0,
+    1, 0, 0,
     (SELECT id FROM ost_sla WHERE name = 'High - 4 Hours' LIMIT 1),
     (SELECT id FROM ost_department WHERE name = 'Network Operations' LIMIT 1),
     'Network',
@@ -122,10 +115,10 @@ WHERE NOT EXISTS (SELECT 1 FROM ost_help_topic WHERE topic = 'Network');
 
 -- Sub-topics under Account Issues
 INSERT INTO ost_help_topic
-    (isactive, ispublic, noautoresp, pid, sla_id, dept_id, topic, note, created, updated)
+    (ispublic, noautoresp, topic_pid, sla_id, dept_id, topic, notes, created, updated)
 SELECT
-    1, 1, 0,
-    (SELECT id FROM ost_help_topic WHERE topic = 'Account Issues' LIMIT 1),
+    1, 0,
+    (SELECT topic_id FROM ost_help_topic WHERE topic = 'Account Issues' LIMIT 1),
     (SELECT id FROM ost_sla WHERE name = 'High - 4 Hours' LIMIT 1),
     (SELECT id FROM ost_department WHERE name = 'IT Helpdesk' LIMIT 1),
     'Password Reset',
@@ -134,10 +127,10 @@ SELECT
 WHERE NOT EXISTS (SELECT 1 FROM ost_help_topic WHERE topic = 'Password Reset');
 
 INSERT INTO ost_help_topic
-    (isactive, ispublic, noautoresp, pid, sla_id, dept_id, topic, note, created, updated)
+    (ispublic, noautoresp, topic_pid, sla_id, dept_id, topic, notes, created, updated)
 SELECT
-    1, 1, 0,
-    (SELECT id FROM ost_help_topic WHERE topic = 'Account Issues' LIMIT 1),
+    1, 0,
+    (SELECT topic_id FROM ost_help_topic WHERE topic = 'Account Issues' LIMIT 1),
     (SELECT id FROM ost_sla WHERE name = 'High - 4 Hours' LIMIT 1),
     (SELECT id FROM ost_department WHERE name = 'IT Helpdesk' LIMIT 1),
     'Account Lockout',
@@ -146,10 +139,10 @@ SELECT
 WHERE NOT EXISTS (SELECT 1 FROM ost_help_topic WHERE topic = 'Account Lockout');
 
 INSERT INTO ost_help_topic
-    (isactive, ispublic, noautoresp, pid, sla_id, dept_id, topic, note, created, updated)
+    (ispublic, noautoresp, topic_pid, sla_id, dept_id, topic, notes, created, updated)
 SELECT
-    1, 1, 0,
-    (SELECT id FROM ost_help_topic WHERE topic = 'Account Issues' LIMIT 1),
+    1, 0,
+    (SELECT topic_id FROM ost_help_topic WHERE topic = 'Account Issues' LIMIT 1),
     (SELECT id FROM ost_sla WHERE name = 'Normal - 8 Hours' LIMIT 1),
     (SELECT id FROM ost_department WHERE name = 'IT Helpdesk' LIMIT 1),
     'New User Setup',
@@ -158,10 +151,10 @@ SELECT
 WHERE NOT EXISTS (SELECT 1 FROM ost_help_topic WHERE topic = 'New User Setup');
 
 INSERT INTO ost_help_topic
-    (isactive, ispublic, noautoresp, pid, sla_id, dept_id, topic, note, created, updated)
+    (ispublic, noautoresp, topic_pid, sla_id, dept_id, topic, notes, created, updated)
 SELECT
-    1, 1, 0,
-    (SELECT id FROM ost_help_topic WHERE topic = 'Account Issues' LIMIT 1),
+    1, 0,
+    (SELECT topic_id FROM ost_help_topic WHERE topic = 'Account Issues' LIMIT 1),
     (SELECT id FROM ost_sla WHERE name = 'Normal - 8 Hours' LIMIT 1),
     (SELECT id FROM ost_department WHERE name = 'IT Helpdesk' LIMIT 1),
     'Access Request',
@@ -170,9 +163,7 @@ SELECT
 WHERE NOT EXISTS (SELECT 1 FROM ost_help_topic WHERE topic = 'Access Request');
 
 -- Verify
-SELECT 'SLA Plans' AS section, name, grace_period AS hours FROM ost_sla
-UNION ALL
-SELECT 'Departments', name, NULL FROM ost_department
-UNION ALL
-SELECT 'Help Topics', topic, NULL FROM ost_help_topic
-ORDER BY section, name;
+SELECT 'SLA' AS section, name AS item FROM ost_sla
+UNION ALL SELECT 'Department', name FROM ost_department
+UNION ALL SELECT 'Help Topic', topic FROM ost_help_topic
+ORDER BY section, item;

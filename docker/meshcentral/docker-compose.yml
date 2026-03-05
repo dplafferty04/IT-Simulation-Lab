@@ -6,7 +6,8 @@ services:
     container_name: meshcentral
     restart: unless-stopped
     ports:
-      - "8086:443"   # HTTPS web UI + agent traffic
+      - "8086:443"   # HTTPS web UI (browser access)
+      - "443:443"    # Agent installer direct connection
       - "8085:80"    # HTTP (redirects to HTTPS)
     environment:
       - NODE_ENV=production

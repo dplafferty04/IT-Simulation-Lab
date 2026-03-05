@@ -1,9 +1,10 @@
 {
   "$schema": "https://raw.githubusercontent.com/Ylianst/MeshCentral/master/meshcentral-config-schema.json",
   "settings": {
-    "cert": "meshcentral.corp.local",
+    "cert": "192.168.1.165",
     "port": 443,
     "aliasPort": 443,
+    "allowedOrigin": "*",
     "redirPort": 80,
     "AgentPing": 60,
     "allowLoginToken": true,

@@ -35,7 +35,7 @@ services:
   # osTicket Application
   # ----------------------------------------------------------
   osticket:
-    image: osticket/osticket:latest
+    image: devinsolutions/osticket:1.17.5
     container_name: osticket_app
     restart: unless-stopped
     depends_on:
@@ -49,12 +49,17 @@ services:
       MYSQL_USER: osticket
       MYSQL_PASSWORD: ${OST_DB_PASSWORD:-0sTick3t!P@ssChangeMeNow}
       INSTALL_SECRET: ${OST_INSTALL_SECRET:-Ch4ng3M3N0w!2024XYZ_UniqueSecret}
+      INSTALL_NAME: "CorpTech IT Helpdesk"
+      INSTALL_EMAIL: helpdesk@corp.local
+      INSTALL_URL: "http://${HOST_IP:-localhost}:8080/"
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@corp.local}
-      HELPDESK_NAME: "CorpTech IT Helpdesk"
-      HELPDESK_URL: "http://${HOST_IP:-localhost}:8080"
+      ADMIN_FIRSTNAME: Admin
+      ADMIN_LASTNAME: User
+      ADMIN_USERNAME: ostadmin
+      ADMIN_PASSWORD: ${OST_ADMIN_PASSWORD:-C0rpT3ch!Admin}
     volumes:
-      - osticket_uploads:/var/lib/osticket/uploads
-      - osticket_plugins:/var/lib/osticket/include/plugins
+      - osticket_uploads:/var/www/html/upload
+      - osticket_plugins:/var/www/html/include/plugins
     networks:
       - corptech_net
 
@@ -94,10 +99,42 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - nginx_logs:/var/log/nginx
     depends_on:
       - osticket
     networks:
       - corptech_net
+
+  # ----------------------------------------------------------
+  # Splunk Enterprise
+  # Web UI on :8000 | HEC on :8088 | Syslog on :5514 (UDP)
+  # ----------------------------------------------------------
+  splunk:
+    image: splunk/splunk:9.3
+    container_name: corptech_splunk
+    restart: unless-stopped
+    ports:
+      - "8000:8000"   # Web UI
+      - "8088:8088"   # HTTP Event Collector
+      - "5514:5514/udp" # Syslog input
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_PASSWORD: ${SPLUNK_PASSWORD:-Knucklehead526$}
+      SPLUNK_LICENSE_URI: "Free"
+      SPLUNK_APPS_URL: ""
+    volumes:
+      - splunk_data:/opt/splunk/var
+      - splunk_etc:/opt/splunk/etc
+      - nginx_logs:/var/log/nginx:ro
+      - ./splunk/apps/corptech_helpdesk:/opt/splunk/etc/apps/corptech_helpdesk
+    networks:
+      - corptech_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
 
 volumes:
   osticket_db_data:
@@ -106,6 +143,9 @@ volumes:
   meshcentral_data:
   meshcentral_user_files:
   meshcentral_backup:
+  nginx_logs:
+  splunk_data:
+  splunk_etc:
 
 networks:
   corptech_net:
