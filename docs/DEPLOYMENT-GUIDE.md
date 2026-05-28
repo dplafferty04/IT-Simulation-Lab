@@ -4,41 +4,46 @@
 
 ---
 
-### 1. Proxmox VE — The Hypervisor
+### 1. Oracle VirtualBox — The Hypervisor
 
-**What it is:** Proxmox is an open-source Type-1 hypervisor (bare metal). It runs directly on your server hardware and hosts all your virtual machines. Think of it as the foundation every other component sits on.
+**What it is:** VirtualBox is a free, open-source Type-2 hypervisor from Oracle. It runs as an application on your existing OS (Windows, macOS, or Linux) and lets you create and run virtual machines inside it.
 
 **What it does in this lab:**
-- Hosts DC01 (Windows Server 2022) and WS01 (Windows 11) as KVM virtual machines
-- Provides SPICE/VNC console access to VMs without needing a separate monitor
-- Lets you snapshot VMs before destructive tests (like offboarding scripts)
-- Manages virtual networking — each VM gets a virtual NIC connected to a virtual bridge (`vmbr0`), which your pfSense VM tags with VLANs
+- Hosts DC01 (Windows Server 2022) and WS01 (Windows 11) as isolated virtual machines
+- Provides a GUI console to each VM — no separate KVM switch or monitor needed
+- Lets you snapshot VMs before destructive tests (like offboarding scripts) so you can roll back
+- Manages virtual networking via Host-Only adapters — each VM gets a virtual NIC connected to a private network that only the host and other VMs on the same adapter can reach
 
-**Why you need it:** Without a hypervisor you'd need multiple physical machines. Proxmox lets you run the entire lab on one box.
+**Why you need it:** Without a hypervisor you'd need multiple physical machines. VirtualBox lets you run the entire lab on one PC.
 
 **Key concepts:**
 - **VM** — a full virtual computer with its own CPU, RAM, and disk, completely isolated from other VMs
-- **VirtIO** — paravirtualized drivers that give VMs near-native disk and network performance. Required for Windows VMs on Proxmox — without them the Windows installer won't see the disk
-- **Thin provisioning** — the VM's disk file only uses the space that's actually written, not the full allocated size. A 60 GB disk might only use 15 GB on the Proxmox host
+- **Host-Only Adapter** — a virtual network adapter that creates a private LAN between your host machine and your VMs. VMs on the same Host-Only network can talk to each other and to the host, but not to the internet (unless you add a second NAT adapter). This is how this lab replaces VLAN segmentation without needing a separate firewall VM
+- **Guest Additions** — a VirtualBox driver package installed inside each VM that enables shared clipboard, drag-and-drop file transfer, and better display scaling (replaces VirtIO drivers from the Proxmox equivalent)
+- **Dynamic disk** — the VM's `.vdi` disk file only uses the space actually written, not the full allocated size. A 60 GB disk might only use 15 GB on the host
 
 ---
 
-### 2. pfSense — The Firewall & VLAN Router
+### 2. VirtualBox Host-Only Networking — Network Segmentation
 
-**What it is:** pfSense is an open-source firewall and router OS, typically running as a VM in a homelab. It controls all traffic between your VLANs and to/from the internet.
+**What it is:** Instead of a pfSense firewall VM, this lab uses VirtualBox's built-in Host-Only networking to create two isolated virtual LANs. VirtualBox acts as the network fabric.
 
 **What it does in this lab:**
-- **VLAN segmentation** — splits your lab into two broadcast domains: VLAN 10 (Corporate LAN, where AD/Docker/workstations live) and VLAN 20 (Management, where Splunk lives). Devices on different VLANs can't talk to each other unless pfSense explicitly allows it
-- **DHCP server** — hands out IP addresses to VMs (you override these with static leases for servers)
-- **DNS forwarder** — forwards `corp.local` DNS queries to DC01, and everything else to your upstream DNS (8.8.8.8). This is what lets workstations resolve `\\DC01\CompanyShare` by name
-- **Firewall rules** — enforces the principle of least privilege: Splunk can receive logs from VLAN 10, but VLAN 10 clients can't browse to Splunk's admin port unless a rule allows it
+- **vboxnet0 (192.168.10.0/24) — Corporate LAN**: DC01, WS01, and the Docker host all live here. VMs communicate with each other and with the host machine on this segment
+- **vboxnet1 (192.168.20.0/24) — Management segment**: Splunk lives here, isolated from the corporate LAN. Splunk receives log data from DC01 via the Universal Forwarder (port 9997), but workstations can't browse to Splunk's admin UI unless you explicitly add a NAT or route
+- **Static IPs** — each VM gets a manually configured static IP within its Host-Only range. DHCP from VirtualBox is disabled so IPs are predictable
 
-**Why you need it:** In a real corporate environment, servers and workstations are always on different network segments. Showing VLAN-aware firewall rules on your resume demonstrates you understand network security beyond just "plug everything into one switch."
+**Why this approach works:** The Host-Only adapter creates true network isolation — VMs on vboxnet0 cannot reach vboxnet1 by default, mimicking VLAN segmentation in a production environment without the overhead of a firewall VM.
 
-**Key concepts:**
-- **VLAN (Virtual LAN)** — a logical network segment. Devices on VLAN 10 send traffic tagged with `802.1Q` VLAN ID 10. The switch/pfSense strips or reads this tag and routes accordingly
-- **Firewall rule order** — pfSense processes rules top-to-bottom, first match wins. A "deny all" at the bottom means anything not explicitly permitted is blocked
-- **Static DHCP lease** — tells DHCP to always give the same IP to a specific MAC address. Cheaper than configuring a static IP inside the VM, and survives reimages
+**Key IP assignments:**
+
+| Host | IP | Role |
+|------|-----|------|
+| VirtualBox host (gateway) | 192.168.10.1 | Host gateway for Corp LAN |
+| DC01 | 192.168.10.10 | AD DC, DNS server |
+| WS01 | 192.168.10.20 | Domain-joined workstation |
+| Docker host | 192.168.10.50 | osTicket, MeshCentral, Nginx |
+| Splunk | 192.168.20.10 | SIEM |
 
 ---
 
@@ -144,7 +149,7 @@ Docker Volume              VM (DC01/WS01)
                            (connects OUT to :4433)
 ```
 
-The key insight: **the agent connects out, not in**. This means you don't need to open firewall ports to each VM — you only need port 4433 open inbound on the Docker host. Every VM with an agent installed will then appear in your MeshCentral dashboard.
+The key insight: **the agent connects out, not in**. This means you don't need to open firewall ports to each VM — you only need port 4433 reachable on the Docker host (192.168.10.50) from the Host-Only network. Every VM with an agent installed will then appear in your MeshCentral dashboard.
 
 **Device Groups (Meshes):**
 Each Device Group has a unique cryptographic ID. This ID is embedded in the agent installer binary. When an agent runs, it uses the embedded ID to register itself with the correct group. This is how MeshCentral knows which group to put a device in.
@@ -241,113 +246,98 @@ A terminal UI (TUI) built entirely in PowerShell. Uses a `while ($true)` loop wi
 
 ## Step-by-Step Deployment Guide
 
-### Phase 0 — Prepare Your Hardware
+### Phase 0 — Prepare Your Host Machine
 
-**Minimum Proxmox host specs:**
-- CPU: 6+ cores (2 for DC01, 2 for WS01, 2 for pfSense, remainder for Docker/Splunk)
-- RAM: 24 GB minimum (DC01: 4GB, WS01: 4GB, pfSense: 1GB, Docker host: 4GB, Splunk: 8GB)
-- Storage: 300 GB SSD (Proxmox OS: 50GB, VMs: 250GB)
-- Network: 1x NIC minimum (Proxmox handles VLANs via 802.1Q on one NIC with a managed switch, or a second NIC for the WAN)
+**Minimum host specs:**
+- CPU: 4+ cores with Intel VT-x or AMD-V enabled in BIOS (required for 64-bit VMs)
+- RAM: 16 GB minimum (DC01: 4 GB, WS01: 4 GB, Docker on host: remainder)
+- Storage: 150 GB free disk space (DC01: 60 GB, WS01: 40 GB, Docker volumes: ~10 GB)
+- OS: Windows 10/11, macOS, or Linux — VirtualBox runs on all three
 
-**ISOs to download before starting:**
-1. Proxmox VE 8.x ISO — from proxmox.com
-2. Windows Server 2022 Evaluation ISO — from Microsoft (free, 180-day eval)
-3. Windows 11 ISO — from Microsoft Media Creation Tool
-4. VirtIO driver ISO — from `https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso`
-5. pfSense ISO — from pfsense.org (or OPNsense if you prefer)
+**Software to install before starting:**
+1. Oracle VirtualBox 7.x — from virtualbox.org
+2. VirtualBox Extension Pack (same version as VirtualBox) — enables USB 2.0/3.0, RDP
 
----
-
-### Phase 1 — Install Proxmox
-
-1. Boot your server from the Proxmox ISO
-2. Install to your primary disk, set the management IP (e.g. `192.168.1.100`)
-3. After install, access the web UI: `https://192.168.1.100:8006`
-4. Upload all ISOs to Proxmox: `Datacenter → Storage → local → ISO Images → Upload`
+**ISOs to download:**
+1. Windows Server 2022 Evaluation ISO — from Microsoft Evaluation Center (free, 180-day eval)
+2. Windows 11 ISO — from Microsoft Media Creation Tool
+3. Splunk Enterprise installer — from splunk.com (free developer license or 60-day trial)
 
 ---
 
-### Phase 2 — Set Up pfSense (VLAN Router/Firewall)
+### Phase 1 — Configure VirtualBox Host-Only Networks
 
-**Create the pfSense VM:**
-```
-General:  Name=pfSense, VM ID=100
-OS:       pfSense ISO, Type=Other
-System:   Default (SeaBIOS is fine for pfSense)
-Disks:    8 GB, virtio-scsi
-CPU:      1 core, type=host
-Memory:   1024 MB
-Network:  Adapter 1: WAN (bridge to your physical NIC)
-          Adapter 2: LAN (bridge vmbr1, no VLAN tag — trunked)
-```
+Before creating any VMs, set up the two virtual networks.
 
-**pfSense initial config:**
-- WAN: DHCP from your home router (or static from your ISP block)
-- LAN: `192.168.10.1/24` (VLAN 10 gateway)
-- In pfSense web UI (`https://192.168.10.1`):
+1. Open VirtualBox → **File > Host Network Manager** (or **Tools > Network** in newer versions)
+2. Create **vboxnet0** (Corporate LAN):
+   - IPv4 Address: `192.168.10.1`
+   - IPv4 Mask: `255.255.255.0`
+   - DHCP Server: **Disabled**
+3. Create **vboxnet1** (Management):
+   - IPv4 Address: `192.168.20.1`
+   - IPv4 Mask: `255.255.255.0`
+   - DHCP Server: **Disabled**
 
-Add VLANs: `Interfaces → VLANs → Add`
-- VLAN 10: tag 10, parent = your LAN NIC, description = "Corp LAN"
-- VLAN 20: tag 20, parent = your LAN NIC, description = "Management"
-
-Add DHCP for each VLAN: `Services → DHCP Server`
-- VLAN 10: range `192.168.10.100-192.168.10.200`, DNS = `192.168.10.10` (DC01)
-- VLAN 20: range `192.168.20.100-192.168.20.200`
-
-Add static DHCP leases (after VMs are created and you have their MAC addresses):
-```
-192.168.10.10  → DC01
-192.168.10.20  → WS01
-192.168.10.50  → Docker host
-192.168.20.10  → Splunk
-```
-
-**Firewall rules** — `Firewall → Rules → VLAN10`:
-```
-Action  Source          Destination          Port    Description
-Pass    VLAN10_NET      192.168.10.10        443,389,88,445  AD services
-Pass    VLAN10_NET      192.168.10.50        8080,8086,4433  Docker services
-Pass    VLAN10_NET      192.168.20.10        9997    Splunk forwarder
-Pass    VLAN10_NET      any                  80,443  Internet (general)
-Block   VLAN10_NET      192.168.20.0/24      any     Block mgmt VLAN (except above)
-```
+> Both networks use static IPs only. Disabling DHCP ensures your VMs always have predictable addresses.
 
 ---
 
-### Phase 3 — Create and Configure DC01
+### Phase 2 — Create and Configure DC01
 
-**Create the VM in Proxmox:**
+**Create the VM:**
 ```
-General:  Name=DC01, VM ID=101
-OS:       Windows Server 2022 ISO, Type=Windows 11/2022
-System:   Machine=q35, BIOS=OVMF (UEFI), EFI disk=32GB, TPM=disabled
-Disks:    60GB, virtio-scsi-single, Write Back cache
-CPU:      2 cores, type=host
-Memory:   4096MB, Balloon=OFF
-Network:  virtio, vmbr1, VLAN tag=10
+Name:     DC01
+Type:     Microsoft Windows
+Version:  Windows 2022 (64-bit)
+RAM:      4096 MB
+Disk:     60 GB, VDI, Dynamically Allocated
 ```
 
-Add the VirtIO ISO as a second CD-ROM drive before starting.
+**VM Settings** (after creation, before first boot):
+- **System > Processor:** 2 CPUs, enable PAE/NX
+- **System > Acceleration:** Enable VT-x/AMD-V, Nested Paging
+- **Display > Screen:** 128 MB video memory, VMSVGA
+- **Storage:** Attach Windows Server 2022 ISO to the IDE optical drive
+- **Network > Adapter 1:** Host-Only Adapter → `vboxnet0`
 
 **Install Windows Server 2022:**
-1. Start VM, open SPICE console, boot from ISO
-2. Select: "Windows Server 2022 Standard (Desktop Experience)"
-3. Custom Install → Load Driver → Browse → VirtIO ISO → `vioscsi\2k22\amd64` → Load
-4. Select your disk, complete installation
-5. Set local Administrator password: `TempLocal!P@ss2024`
+1. Boot VM from ISO
+2. Select **"Windows Server 2022 Standard Evaluation (Desktop Experience)"**
+3. Choose **Custom Install** → select the unallocated disk → proceed
+4. Set local Administrator password when prompted
 
-**Set static IP before running scripts:**
+**Install VirtualBox Guest Additions:**
+- VM menu bar → **Devices > Insert Guest Additions CD Image**
+- Run `VBoxWindowsAdditions.exe` inside the VM
+- Reboot after installation
+
+**Set static IP (in PowerShell as Administrator on DC01):**
 ```powershell
-# In PowerShell as Administrator on DC01
 $nic = (Get-NetAdapter | Where-Object Status -eq Up).Name
-New-NetIPAddress -InterfaceAlias $nic -IPAddress 192.168.10.10 -PrefixLength 24 -DefaultGateway 192.168.10.1
-Set-DnsClientServerAddress -InterfaceAlias $nic -ServerAddresses "127.0.0.1","8.8.8.8"
+
+New-NetIPAddress -InterfaceAlias $nic `
+    -IPAddress 192.168.10.10 `
+    -PrefixLength 24 `
+    -DefaultGateway 192.168.10.1
+
+Set-DnsClientServerAddress -InterfaceAlias $nic `
+    -ServerAddresses "127.0.0.1","8.8.8.8"
+
+ping 192.168.10.1 -n 2
 ```
 
-**Copy the project scripts to DC01:**
-Option A — via SPICE console clipboard (small files): copy-paste content directly
-Option B — via network share: on your admin workstation, share the `active-directory\` folder and access it from DC01 as `\\your-admin-pc-ip\share`
-Option C — via USB ISO: create an ISO from the scripts folder and mount it in Proxmox
+**Transfer scripts to DC01:**
+
+Option A — Shared Folder (recommended):
+1. VM Settings > Shared Folders > Add
+2. Point to your `IT_Simulation/` folder on the host
+3. Enable Auto-mount, make it permanent
+4. Inside the VM it will appear as a network drive (e.g., `Z:\`)
+
+Option B — Drag and Drop:
+- VM menu → Devices > Drag and Drop > Bidirectional
+- Drag files from your host directly into the VM window
 
 **Run the AD setup scripts in order:**
 ```powershell
@@ -357,12 +347,12 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 .\00-promote-dc.ps1
 
 # ===== REBOOT HAPPENS HERE =====
-# Log back in as CORP\Administrator (domain admin, password from script)
+# Log back in as CORP\Administrator
 
-# Stage 1: OUs, groups, 10 users (run ~5 min)
+# Stage 1: OUs, groups, 10 users (~5 min)
 .\01-configure-ad.ps1
 
-# Stage 2: 4 GPOs created and linked (run ~3 min)
+# Stage 2: 4 GPOs created and linked (~3 min)
 .\02-gpo-policies.ps1
 
 # Stage 3: Verify — all checks should show [PASS]
@@ -385,56 +375,82 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 
 ---
 
-### Phase 4 — Create and Configure WS01
+### Phase 3 — Create and Configure WS01
 
-**Create VM:**
+**Create the VM:**
 ```
-General:  Name=WS01, VM ID=102
-OS:       Windows 11 ISO, Type=Windows 11/2022
-System:   Machine=q35, BIOS=OVMF, EFI disk=32GB, TPM=v2.0 (required for Win11)
-Disks:    40GB, virtio-scsi-single
-CPU:      2 cores, type=host
-Memory:   4096MB
-Network:  virtio, vmbr1, VLAN tag=10
+Name:     WS01
+Type:     Microsoft Windows
+Version:  Windows 11 (64-bit)
+RAM:      4096 MB
+Disk:     40 GB, VDI, Dynamically Allocated
 ```
 
-**Install Windows 11** (use VirtIO ISO for drivers, same as DC01 process)
+**VM Settings:**
+- **System > Processor:** 2 CPUs
+- **System > Acceleration:** Enable VT-x/AMD-V
+- **Storage:** Attach Windows 11 ISO
+- **Network > Adapter 1:** Host-Only Adapter → `vboxnet0`
+
+> Windows 11 requires TPM 2.0. If the installer blocks you, use the registry bypass during setup: at the "This PC can't run Windows 11" screen, press Shift+F10 to open cmd, then run `regedit` and add `HKEY_LOCAL_MACHINE\SYSTEM\Setup\MoSetup` → `AllowUpgradesWithUnsupportedTPMOrCPU` (DWORD = 1).
+
+**Install Windows 11**, then install Guest Additions the same way as DC01.
 
 **Set static IP and join domain:**
 ```powershell
-# On WS01, as local Administrator
 $nic = (Get-NetAdapter | Where-Object Status -eq Up).Name
-New-NetIPAddress -InterfaceAlias $nic -IPAddress 192.168.10.20 -PrefixLength 24 -DefaultGateway 192.168.10.1
-Set-DnsClientServerAddress -InterfaceAlias $nic -ServerAddresses "192.168.10.10"
+
+New-NetIPAddress -InterfaceAlias $nic `
+    -IPAddress 192.168.10.20 `
+    -PrefixLength 24 `
+    -DefaultGateway 192.168.10.1
+
+Set-DnsClientServerAddress -InterfaceAlias $nic `
+    -ServerAddresses "192.168.10.10"
 
 # Verify you can resolve the domain
 Resolve-DnsName corp.local
 
 # Join the domain (prompts for CORP\Administrator credential)
-Add-Computer -DomainName "corp.local" -Credential (Get-Credential CORP\Administrator) -Restart -Force
+Add-Computer -DomainName "corp.local" `
+             -Credential (Get-Credential CORP\Administrator) `
+             -Restart -Force
 ```
 
 After reboot, log in as `CORP\jsmith` (password: `Welc0me!2024`, must change immediately).
 Verify: Z: drive is mapped automatically, login banner appears, USB drive is blocked.
 
+**Verify GPO application:**
+```powershell
+gpresult /h C:\gpo-report.html /f
+Start-Process "C:\gpo-report.html"
+```
+Look for all 4 CORP-* GPOs in the Applied GPOs section.
+
 ---
 
-### Phase 5 — Set Up Docker Host
+### Phase 4 — Set Up the Docker Host
 
-Your Docker host can be a Linux VM in Proxmox or your existing Docker machine.
+Docker can run directly on your host machine (if it's Linux or you have Docker Desktop on Windows/Mac) or inside a dedicated Ubuntu VM in VirtualBox.
 
-**If creating a new Ubuntu VM:**
+**Option A — Docker Desktop on Windows host (simplest):**
+- Install Docker Desktop from docker.com
+- Ensure WSL2 backend is enabled
+- No additional VM needed — Docker runs on your host machine at `192.168.10.1` (or your host's IP on vboxnet0)
+- Update `docker/.env`: set `HOST_IP` to your host machine's IP on the `vboxnet0` network
+
+**Option B — Ubuntu VM in VirtualBox:**
 ```
-General:  Name=docker-host, VM ID=103
-OS:       Ubuntu 22.04 LTS ISO
-Disks:    100GB
-CPU:      4 cores
-Memory:   8192MB
-Network:  virtio, vmbr1, VLAN tag=10
+Name:     docker-host
+Type:     Linux
+Version:  Ubuntu (64-bit)
+RAM:      4096 MB
+Disk:     60 GB, VDI, Dynamically Allocated
+Network > Adapter 1: Host-Only Adapter → vboxnet0
 Static IP: 192.168.10.50
 ```
 
-**Install Docker on Ubuntu:**
+Install Docker on Ubuntu:
 ```bash
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER
@@ -442,29 +458,33 @@ newgrp docker
 docker --version  # should show 24+
 ```
 
-**Deploy the lab stack:**
+**Deploy the lab stack (either option):**
 ```bash
-# Clone or copy the project to the Docker host
-git clone https://github.com/dplafferty04/enterprise-it-simulation-lab.git
-cd enterprise-it-simulation-lab/docker
+cd IT_Simulation/docker
 
-# Configure environment
-cp .env.example .env      # or edit .env directly
+# Edit .env — set HOST_IP and MESH_HOSTNAME to the Docker host's IP on vboxnet0
 nano .env
-# Set: HOST_IP=192.168.10.50, MESH_HOSTNAME=192.168.10.50
-# Change all passwords from the defaults
 
-# Start everything
+# Start all services
 bash start-lab.sh up
-bash start-lab.sh status  # all 4 containers should show healthy/running
+bash start-lab.sh status
+```
+
+Expected output:
+```
+NAME                STATUS
+osticket_db         running (healthy)
+osticket_app        running
+corptech_nginx      running
+meshcentral         running
 ```
 
 ---
 
-### Phase 6 — osTicket Post-Install
+### Phase 5 — osTicket Post-Install
 
 ```
-1. Open: http://192.168.10.50:8080/setup
+1. Open: http://<docker-host-ip>:8080/setup
 2. Fill out the installer form:
    Helpdesk Name:  CorpTech IT Helpdesk
    Admin Email:    admin@corp.local
@@ -494,18 +514,20 @@ bash run-seed.sh --verify
 ```
 
 ```
-5. Log into agent panel: http://192.168.10.50:8080/scp
+5. Log into agent panel: http://<docker-host-ip>:8080/scp
    Username: admin | Password: (what you set above)
 6. Set real passwords for alopez, tnguyen, mchen, jsmith:
    Admin Panel → Staff → click each agent → Set Password
 ```
 
+Full guide: [`docker/osticket/POST-INSTALL.md`](../docker/osticket/POST-INSTALL.md)
+
 ---
 
-### Phase 7 — MeshCentral Post-Install
+### Phase 6 — MeshCentral Post-Install
 
 ```
-1. Open: https://192.168.10.50:8086
+1. Open: https://<docker-host-ip>:8086
    (Accept the browser's self-signed cert warning)
 2. Create admin account:
    Username: admin | Email: admin@corp.local | Password: (your choice)
@@ -515,7 +537,7 @@ bash run-seed.sh --verify
    Same process, different name
 5. Get the Mesh ID for each group:
    Click group → ... menu → Copy Mesh ID
-   Save both IDs — you need them for Step 6
+   Save both IDs — you need them for the agent installs
 ```
 
 **Install agent on DC01** (run in elevated PowerShell on DC01):
@@ -536,21 +558,25 @@ bash run-seed.sh --verify
 
 Within 60 seconds, both VMs should appear as "Online" in MeshCentral.
 
-**Create agent accounts for helpdesk staff:**
-```
-Admin → Users → Add User
-Create: alopez, tnguyen (User level, Workstations group)
-Create: mchen (Operator level, both groups)
-Create: jsmith (Admin level, both groups)
-```
+Full guide: [`docker/meshcentral/POST-INSTALL.md`](../docker/meshcentral/POST-INSTALL.md)
 
 ---
 
-### Phase 8 — Splunk Setup
+### Phase 7 — Splunk Setup
 
-**Install Splunk Enterprise** on your Splunk VM (192.168.20.10):
+**Install Splunk Enterprise** on a dedicated machine or VM at `192.168.20.10`:
+
+If using a second VirtualBox VM, create it with:
+```
+Name:     splunk
+RAM:      8192 MB (Splunk is memory-hungry)
+Disk:     60 GB
+Network > Adapter 1: Host-Only Adapter → vboxnet1
+Static IP: 192.168.20.10
+```
+
+Then install Splunk (Linux recommended):
 ```bash
-# Download installer from splunk.com (requires free account)
 wget -O splunk.tgz 'https://download.splunk.com/products/splunk/releases/9.x.x/linux/splunk-9.x.x-linux-amd64.tgz'
 tar -xf splunk.tgz -C /opt
 /opt/splunk/bin/splunk start --accept-license --answer-yes --no-prompt \
@@ -564,7 +590,6 @@ tar -xf splunk.tgz -C /opt
 # Install, then configure:
 $splunkHome = "C:\Program Files\SplunkUniversalForwarder"
 
-# inputs.conf — which logs to collect
 @'
 [WinEventLog://Security]
 disabled = 0
@@ -579,7 +604,6 @@ disabled = 0
 index = wineventlog
 '@ | Out-File "$splunkHome\etc\system\local\inputs.conf" -Encoding UTF8
 
-# outputs.conf — where to send
 @'
 [tcpout]
 defaultGroup = splunk-indexer
@@ -629,22 +653,17 @@ cp splunk/dashboards/helpdesk-operations.xml \
 cp splunk/alerts/savedsearches.conf \
    "$APP_DIR/local/savedsearches.conf"
 
-# Set your email address in the alerts
 sed -i 's/helpdesk@corp.local/your-email@domain.com/g' \
     "$APP_DIR/local/savedsearches.conf"
 
 $SPLUNK_HOME/bin/splunk restart
 ```
 
-**Configure Splunk email** (for alerts):
-`Settings → Server Settings → Email Settings`
-- SMTP server: your mail relay or `localhost` if you have postfix/sendmail
+Full guide: [`splunk/SETUP.md`](../splunk/SETUP.md)
 
 ---
 
-### Phase 9 — Run the Helpdesk Demo
-
-**Test the full workflow:**
+### Phase 8 — Run the Helpdesk Demo
 
 ```powershell
 # On DC01 — open the interactive helpdesk toolkit
@@ -652,10 +671,9 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 .\scripts\powershell\helpdesk-tools.ps1
 ```
 
-**Trigger a test lockout** (to see Splunk alert fire and practice the unlock workflow):
+**Trigger a test lockout** (to see the Splunk alert fire and practice the unlock workflow):
 ```powershell
-# On WS01 — run this to lock out djohnson (use test account, never production users carelessly)
-# Attempt logon 6 times with wrong password:
+# On WS01 — attempt logon 6 times with wrong password to lock out djohnson
 $cred = New-Object System.Management.Automation.PSCredential(
     "CORP\djohnson",
     (ConvertTo-SecureString "wrongpassword" -AsPlainText -Force)
@@ -666,14 +684,16 @@ $cred = New-Object System.Management.Automation.PSCredential(
 ```
 
 Within 5 minutes, Splunk should trigger the "Account Lockout" alert. Then:
-1. Check `http://splunk:8000 → Activity → Triggered Alerts`
+1. Check `http://192.168.20.10:8000 → Activity → Triggered Alerts`
 2. Open osTicket, create a ticket for this lockout
 3. Run `helpdesk-tools.ps1 → Option 2 → djohnson` — see the lockout source identified
 4. Unlock the account, close the ticket
 
+Follow the full end-to-end scenario in [`docker/meshcentral/DEMO-WORKFLOW.md`](../docker/meshcentral/DEMO-WORKFLOW.md).
+
 ---
 
-### Phase 10 — Capture Screenshots & Record Demo
+### Phase 9 — Capture Screenshots & Record Demo
 
 Follow the screenshot guide in `README.md`. For the MeshCentral remote session demo, use the workflow in `docker/meshcentral/DEMO-WORKFLOW.md`.
 
@@ -690,12 +710,15 @@ Follow the screenshot guide in `README.md`. For the MeshCentral remote session d
 | Symptom | Check | Fix |
 |---------|-------|-----|
 | WS01 can't join domain | DNS set to 192.168.10.10? | `Set-DnsClientServerAddress` to DC01 IP |
+| WS01 can't ping DC01 | Both on vboxnet0? | VirtualBox VM settings → Network → Adapter 1 → Host-Only → vboxnet0 |
 | osTicket shows blank page | Setup dir still exists? | `docker exec osticket_app rm -rf /var/www/html/setup` |
 | Seed script fails "table not found" | Web installer done? | Complete `http://host:8080/setup` first |
-| MeshCentral agent offline | Port 4433 open? | Check pfSense rule: VLAN10 → Docker host port 4433 |
+| MeshCentral agent offline | Port 4433 reachable? | Ping 192.168.10.50 from DC01; check Docker host firewall |
 | Splunk no data | Forwarder running? | `Get-Service SplunkForwarder` on DC01 |
 | Splunk no data | Index correct? | Try `index=*` in search to find where logs landed |
+| Splunk unreachable from DC01 | vboxnet1 routing? | DC01 needs a second adapter on vboxnet1, or route added |
 | GPO not applying | OU correct? | Run `gpresult /r` on WS01 — check Applied GPOs |
 | Z: drive not mapped | User in group? | `Get-ADGroupMember GRP-SharedDrive-RW` |
 | 4740 events missing | Audit policy? | `auditpol /get /subcategory:"Account Lockout"` |
 | 5136 events missing | DS Changes audit? | `auditpol /set /subcategory:"Directory Service Changes" /success:enable` |
+| Win11 install blocks TPM | TPM bypass needed | Registry bypass via Shift+F10 at setup screen |

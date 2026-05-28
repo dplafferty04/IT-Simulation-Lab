@@ -2,7 +2,7 @@
 
 > A fully self-hosted homelab simulating a small corporate IT environment — Active Directory, helpdesk ticketing, remote support, and SIEM monitoring — built to demonstrate real-world IT operations skills.
 
-![Platform](https://img.shields.io/badge/Platform-Proxmox_8-E57000?style=flat-square)
+![Platform](https://img.shields.io/badge/Platform-VirtualBox-183A61?style=flat-square)
 ![AD](https://img.shields.io/badge/Directory-Windows_Server_2022_AD-0078D4?style=flat-square)
 ![Docker](https://img.shields.io/badge/Container-Docker_Compose-2496ED?style=flat-square)
 ![Splunk](https://img.shields.io/badge/SIEM-Splunk_Enterprise-000000?style=flat-square)
@@ -43,14 +43,14 @@ This lab simulates the IT infrastructure of a 50-person company ("CorpTech"). It
 
 ```mermaid
 graph TB
-    subgraph PROXMOX["Proxmox Hypervisor — 192.168.1.x"]
-        subgraph VLAN10["VLAN 10 — Corporate LAN (192.168.10.0/24)"]
+    subgraph PROXMOX["VirtualBox Host — 192.168.10.x"]
+        subgraph VLAN10["Host-Only Network (192.168.10.0/24)"]
             DC01["🖥 DC01\nWindows Server 2022\nActive Directory + DNS\n192.168.10.10"]
             WS01["💻 WS01\nWindows 11 Workstation\nDomain-joined test client\n192.168.10.20"]
             DOCKER["🐳 Docker Host\nosTicket · MeshCentral · Nginx\n192.168.10.50"]
         end
 
-        subgraph VLAN20["VLAN 20 — Management (192.168.20.0/24)"]
+        subgraph VLAN20["Management Segment (192.168.20.0/24)"]
             SPLUNK["📊 Splunk Enterprise\nSIEM + Dashboards\n192.168.20.10"]
         end
     end
@@ -80,7 +80,7 @@ graph TB
     style DOCKER  fill:#2496ED,color:#fff
     style SPLUNK  fill:#1a1a1a,color:#fff
     style FW      fill:#003F87,color:#fff
-    style PROXMOX fill:#E57000,color:#fff,stroke:#E57000
+    style PROXMOX fill:#183A61,color:#fff,stroke:#183A61
     style VLAN10  fill:#f0f4ff,stroke:#0078D4
     style VLAN20  fill:#fff8f0,stroke:#E57000
 ```
@@ -103,8 +103,8 @@ osTicket ticket created →    Email → helpdesk@corp   →    02-unlock-accoun
 
 | Component | Technology | Purpose | Port(s) |
 |-----------|-----------|---------|---------|
-| **Hypervisor** | Proxmox VE 8 | Host all VMs | — |
-| **Firewall** | pfSense | VLAN routing, DHCP, firewall rules | — |
+| **Hypervisor** | Oracle VirtualBox | Host all VMs | — |
+| **Firewall** | VirtualBox Host-Only Network | Network segmentation, static IPs | — |
 | **Domain Controller** | Windows Server 2022 + AD DS | Authentication, DNS, GPO, SYSVOL | 389, 636, 88 |
 | **Ticketing** | osTicket (Docker) | Helpdesk ticket management | 8080 |
 | **Remote Support** | MeshCentral (Docker) | Self-hosted RMM / remote desktop | 8086, 4433 |
@@ -157,35 +157,32 @@ osTicket ticket created →    Email → helpdesk@corp   →    02-unlock-accoun
 ## Lab Network
 
 ```
-Internet
+VirtualBox Host Machine
     │
-    ▼
-pfSense WAN
-    │
-    ├── VLAN 10 (192.168.10.0/24) — Corporate LAN
-    │       192.168.10.1   pfSense gateway
+    ├── Host-Only Network vboxnet0 (192.168.10.0/24) — Corporate LAN
+    │       192.168.10.1   VirtualBox host gateway
     │       192.168.10.10  DC01 (AD, DNS)
     │       192.168.10.20  WS01 (Windows 11 workstation)
     │       192.168.10.50  Docker host (osTicket :8080, MeshCentral :8086)
     │
-    └── VLAN 20 (192.168.20.0/24) — Management
-            192.168.20.1   pfSense gateway
+    └── Host-Only Network vboxnet1 (192.168.20.0/24) — Management
+            192.168.20.1   VirtualBox host gateway
             192.168.20.10  Splunk Enterprise (:8000)
 ```
 
-**pfSense firewall rules enforced:**
-- VLAN 10 → VLAN 20: blocked except Splunk forwarder port (9997)
-- VLAN 10 → DC01: allowed (Kerberos, LDAP, SMB)
-- VLAN 10 → Docker host: allowed on ports 8080, 8086, 4433
-- Inter-VLAN default: deny
+**Network isolation:**
+- VMs communicate via the Host-Only adapter — no external internet access by default
+- Add a second NAT adapter to any VM that needs internet access (e.g., for Windows Updates)
+- Splunk Universal Forwarder on DC01 sends to 192.168.20.10:9997
 
 ---
 
 ## Prerequisites
 
 ### Hardware / Hypervisor
-- Proxmox VE 8.x host with at least: 8 CPU cores, 32 GB RAM, 500 GB storage
-- pfSense VM or physical firewall with VLAN support
+- Host machine with Oracle VirtualBox 7.x installed
+- Recommended: 8+ CPU cores, 16 GB RAM, 100 GB free disk space
+- VirtualBox Host-Only Network configured (`vboxnet0`, 192.168.10.0/24)
 
 ### Software / ISOs needed
 - Windows Server 2022 ISO (Evaluation available free from Microsoft)
@@ -206,10 +203,10 @@ docker compose version    # Compose v2+
 
 Follow these steps in order. Each component's folder contains a detailed guide.
 
-### Step 1 — Proxmox VM Creation
+### Step 1 — VirtualBox VM Creation
 
-Create DC01 (Windows Server 2022) per `active-directory/PROXMOX-VM-SETUP.md`:
-- 2 vCPU, 4 GB RAM, 60 GB disk, VirtIO NIC on VLAN 10
+Create DC01 (Windows Server 2022) per `active-directory/VIRTUALBOX-VM-SETUP.md`:
+- 2 vCPU, 4 GB RAM, 60 GB disk, Host-Only Adapter on `vboxnet0`
 - Static IP: `192.168.10.10`
 
 Create WS01 (Windows 11) with the same network config, IP `192.168.10.20`.
@@ -349,7 +346,7 @@ Capture these screenshots for your portfolio. Save to `docs/screenshots/`.
 | 12 | PowerShell helpdesk menu running | Run `helpdesk-tools.ps1` → screenshot menu |
 | 13 | PowerShell account unlock — lockout source identified | Run `02-unlock-account.ps1` |
 | 14 | PowerShell offboarding audit report | Run `04-offboard-user.ps1` → open report file |
-| 15 | Proxmox node overview — all VMs running | Proxmox web UI → Node → Summary |
+| 15 | VirtualBox VM overview — all VMs running | VirtualBox Manager → main window |
 
 ### Screenshot Naming Convention
 
@@ -369,11 +366,10 @@ docs/screenshots/
 ├── 12-powershell-helpdesk-menu.png
 ├── 13-powershell-unlock-account.png
 ├── 14-powershell-offboard-report.png
-└── 15-proxmox-vm-overview.png
+└── 15-virtualbox-vm-overview.png
 ```
 
-> **Tip:** Use Proxmox's built-in screenshot function (Ctrl+Alt+5 in SPICE console) or
-> OBS Studio to record the MeshCentral remote session demo as a short video clip.
+> **Tip:** Use the Windows Snipping Tool (Win+Shift+S) or OBS Studio to record the MeshCentral remote session demo as a short video clip.
 
 ---
 
@@ -383,7 +379,7 @@ Copy these directly into your resume. Tailor the metrics to match your actual de
 
 ---
 
-**Designed and deployed a self-hosted enterprise IT simulation lab on Proxmox, implementing Active Directory Domain Services with 3 OUs, 10 user accounts, and 4 enforced Group Policy Objects (password complexity, login banner, USB restriction, GPO drive mapping) — demonstrating end-to-end Windows identity and access management in a production-equivalent environment.**
+**Designed and deployed a self-hosted enterprise IT simulation lab using Oracle VirtualBox, implementing Active Directory Domain Services with 3 OUs, 10 user accounts, and 4 enforced Group Policy Objects (password complexity, login banner, USB restriction, GPO drive mapping) — demonstrating end-to-end Windows identity and access management in a production-equivalent environment.**
 
 ---
 
@@ -391,7 +387,7 @@ Copy these directly into your resume. Tailor the metrics to match your actual de
 
 ---
 
-**Integrated Active Directory event logging with Splunk Enterprise via Universal Forwarder; developed 5 real-time security alerts (account lockout, brute force detection at 5+ failures/10 min, GPO changes, new account creation, after-hours admin logon) and an 8-panel "Helpdesk Operations" dashboard — demonstrating SIEM configuration, SPL query authoring, and security monitoring aligned with NIST and CIS Controls frameworks.**
+**Hardened an Active Directory environment against common attack vectors by configuring audit policies across 5 critical event categories (account lockout, logon failures, user creation, GPO changes, privilege escalation); analyzed Windows Security Event IDs 4625, 4740, 4720, 5136, and 4719 to identify lockout sources, unauthorized account changes, and after-hours admin activity — demonstrating practical knowledge of Windows security monitoring and CIS Controls alignment.**
 
 ---
 
@@ -400,10 +396,10 @@ Copy these directly into your resume. Tailor the metrics to match your actual de
 ### Systems Administration
 - Windows Server 2022 installation, configuration, and promotion to Domain Controller
 - Active Directory: OUs, security groups, user provisioning, Group Policy design
-- Proxmox VM management: VirtIO drivers, UEFI boot, thin provisioning, VLAN tagging
+- VirtualBox VM management: Host-Only networking, snapshots, Guest Additions, dynamic disk provisioning
 
 ### Networking
-- VLAN segmentation design and pfSense firewall rule implementation
+- Network segmentation design using VirtualBox Host-Only adapters
 - DNS configuration (AD-integrated zones, forwarders)
 - SMB file share configuration with access-based enumeration and NTFS permissions
 
@@ -418,7 +414,7 @@ Copy these directly into your resume. Tailor the metrics to match your actual de
 - SQL: osTicket database seeding with stored procedures and relational data
 
 ### Tools & Platforms
-- Proxmox VE · pfSense · Windows Server 2022 · Active Directory · Group Policy
+- Oracle VirtualBox · Windows Server 2022 · Active Directory · Group Policy
 - Docker / Docker Compose · Nginx reverse proxy
 - Splunk Enterprise (SPL, saved searches, Simple XML dashboards)
 - osTicket · MeshCentral · PowerShell · Bash
@@ -437,7 +433,7 @@ IT_Simulation/
 │   ├── 01-configure-ad.ps1            ← OUs, groups, 10 users
 │   ├── 02-gpo-policies.ps1            ← 4 GPOs created and linked
 │   ├── 03-verify-ad.ps1               ← Automated verification
-│   └── PROXMOX-VM-SETUP.md            ← VM creation walkthrough
+│   └── VIRTUALBOX-VM-SETUP.md         ← VM creation walkthrough
 │
 ├── docker/
 │   ├── docker-compose.yml             ← Master compose (all services)
